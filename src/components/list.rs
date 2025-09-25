@@ -2,13 +2,12 @@
 // borrows the column element from iced widgets
 // and draws oddly indexed children first
 
-use cosmic::iced_renderer::core::widget::OperationOutputWrapper;
-
 use cosmic::iced_core::{
     event::{self, Event},
     layout, mouse, overlay, renderer,
-    widget::{Operation, Tree},
-    Alignment, Clipboard, Element, Layout, Length, Padding, Pixels, Rectangle, Shell, Size, Widget,
+    widget::{tree::Tag, Operation, Tree},
+    Alignment, Clipboard, Element, Layout, Length, Padding, Pixels, Rectangle, Shell, Size, Vector,
+    Widget,
 };
 
 pub fn column<'a, Message, Theme, Renderer>(
@@ -143,6 +142,11 @@ where
         }
     }
 
+    fn tag(&self) -> cosmic::iced_core::widget::tree::Tag {
+        struct MyState;
+        Tag::of::<MyState>()
+    }
+
     fn layout(
         &self,
         tree: &mut Tree,
@@ -170,7 +174,7 @@ where
         tree: &mut Tree,
         layout: Layout<'_>,
         renderer: &Renderer,
-        operation: &mut dyn Operation<OperationOutputWrapper<Message>>,
+        operation: &mut dyn Operation<()>,
     ) {
         operation.container(None, layout.bounds(), &mut |operation| {
             self.children
@@ -246,7 +250,7 @@ where
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        // draw even indices first
+        // draw odd indices first
         if let Some(viewport) = layout.bounds().intersection(viewport) {
             for (_, ((child, state), layout)) in self
                 .children
@@ -256,6 +260,10 @@ where
                 .enumerate()
                 .filter(|(i, _)| i % 2 == 1)
             {
+                if !viewport.intersects(&layout.bounds()) {
+                    continue;
+                }
+
                 child
                     .as_widget()
                     .draw(state, renderer, theme, style, layout, cursor, &viewport);
@@ -270,6 +278,10 @@ where
                 .enumerate()
                 .filter(|(i, _)| i % 2 == 0)
             {
+                if !viewport.intersects(&layout.bounds()) {
+                    continue;
+                }
+
                 child
                     .as_widget()
                     .draw(state, renderer, theme, style, layout, cursor, &viewport);
@@ -282,8 +294,9 @@ where
         tree: &'b mut Tree,
         layout: Layout<'_>,
         renderer: &Renderer,
+        translation: Vector,
     ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
-        overlay::from_children(&mut self.children, tree, layout, renderer)
+        overlay::from_children(&mut self.children, tree, layout, renderer, translation)
     }
 
     #[cfg(feature = "a11y")]
