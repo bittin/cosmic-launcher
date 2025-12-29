@@ -25,7 +25,6 @@ use cosmic::iced_runtime::core::event::wayland::LayerEvent;
 use cosmic::iced_runtime::core::event::{PlatformSpecific, wayland};
 use cosmic::iced_runtime::core::layout::Limits;
 use cosmic::iced_runtime::core::window::{Event as WindowEvent, Id as SurfaceId};
-use cosmic::iced_runtime::platform_specific::wayland::layer_surface::IcedMargin;
 use cosmic::iced_widget::row;
 use cosmic::iced_widget::scrollable::RelativeOffset;
 use cosmic::iced_winit::commands::overlap_notify::overlap_notify;
@@ -44,6 +43,7 @@ use iced::{Alignment, Color};
 use pop_launcher::{ContextOption, GpuPreference, IconSource, SearchResult};
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
+use std::path::Path;
 use std::sync::LazyLock;
 use std::{
     collections::{HashMap, VecDeque},
@@ -146,6 +146,7 @@ pub struct CosmicLauncher {
     input_value: String,
     surface_state: SurfaceState,
     launcher_items: Vec<SearchResult>,
+    launcher_item_icon_handles: Vec<Option<cosmic::widget::icon::Handle>>,
     tx: Option<mpsc::Sender<launcher::Request>>,
     menu: Option<(u32, Vec<ContextOption>)>,
     cursor_position: Option<Point<f32>>,
@@ -319,6 +320,7 @@ impl cosmic::Application for CosmicLauncher {
                 input_value: String::new(),
                 surface_state: SurfaceState::Hidden,
                 launcher_items: Vec::new(),
+                launcher_item_icon_handles: Vec::new(),
                 tx: None,
                 menu: None,
                 cursor_position: None,
@@ -510,6 +512,41 @@ impl cosmic::Application for CosmicLauncher {
                                     .collect::<Vec<_>>(),
                             );
                         }
+
+                        self.launcher_item_icon_handles.clear();
+                        self.launcher_item_icon_handles = self
+                            .launcher_items
+                            .iter()
+                            .map(|item| {
+                                item.icon.as_ref().map(|icon_source| match icon_source {
+                                    // Check if the name is actually a path
+                                    IconSource::Name(name) if name.contains('/') => {
+                                        let path = Path::new(&**name);
+                                        if path.exists() {
+                                            icon::from_path(path.into())
+                                        } else {
+                                            icon::from_name("application-default")
+                                                .size(64)
+                                                .fallback(Some(IconFallback::Names(vec![
+                                                    "application-x-executable".into(),
+                                                ])))
+                                                .handle()
+                                        }
+                                    }
+                                    // Fetch icon by name
+                                    IconSource::Mime(name) | IconSource::Name(name) => {
+                                        icon::from_name(&**name)
+                                            .size(64)
+                                            .fallback(Some(IconFallback::Names(vec![
+                                                "application-default".into(),
+                                                "application-x-executable".into(),
+                                            ])))
+                                            .handle()
+                                    }
+                                })
+                            })
+                            .collect();
+
                         let mut cmds = Vec::new();
 
                         while let Some(element) = self.queue.pop_front() {
@@ -781,23 +818,12 @@ impl cosmic::Application for CosmicLauncher {
                             );
                         }
                     }
-                    if let Some(source) = item.icon.as_ref() {
-                        let name = match source {
-                            IconSource::Name(name) | IconSource::Mime(name) => name,
-                        };
+                    if let Some(Some(icon_handle)) = self.launcher_item_icon_handles.get(i) {
                         button_content.push(
-                            icon(
-                                from_name(name.clone())
-                                    .size(64)
-                                    .fallback(Some(IconFallback::Names(vec![
-                                        "application-default".into(),
-                                        "application-x-executable".into(),
-                                    ])))
-                                    .into(),
-                            )
-                            .width(Length::Fixed(32.0))
-                            .height(Length::Fixed(32.0))
-                            .into(),
+                            icon(icon_handle.clone())
+                                .width(Length::Fixed(32.0))
+                                .height(Length::Fixed(32.0))
+                                .into(),
                         );
                     }
 
@@ -927,16 +953,21 @@ impl cosmic::Application for CosmicLauncher {
                     container(id_container(content, MAIN_ID.clone()))
                         .width(Length::Shrink)
                         .height(Length::Shrink)
-                        .class(Container::Custom(Box::new(|theme| container::Style {
-                            text_color: Some(theme.cosmic().on_bg_color().into()),
-                            icon_color: Some(theme.cosmic().on_bg_color().into()),
-                            background: Some(Color::from(theme.cosmic().background.base).into()),
-                            border: Border {
-                                radius: theme.cosmic().corner_radii.radius_m.into(),
-                                width: 1.0,
-                                color: theme.cosmic().bg_divider().into(),
-                            },
-                            shadow: Shadow::default(),
+                        .class(Container::Custom(Box::new(|theme| {
+                            let t = theme.cosmic();
+                            let radii = t.radius_s().map(|x| if x < 4.0 { x } else { x + 4.0 });
+
+                            container::Style {
+                                text_color: Some(t.on_bg_color().into()),
+                                icon_color: Some(t.on_bg_color().into()),
+                                background: Some(Color::from(t.background.base).into()),
+                                border: Border {
+                                    radius: radii.into(),
+                                    width: 1.0,
+                                    color: t.bg_divider().into(),
+                                },
+                                shadow: Shadow::default(),
+                            }
                         })))
                         .padding([24, 32]),
                 );
@@ -1004,7 +1035,7 @@ impl cosmic::Application for CosmicLauncher {
                     wayland::Event::Layer(e, ..),
                 )) => Some(Message::Layer(e)),
                 cosmic::iced::Event::PlatformSpecific(PlatformSpecific::Wayland(
-                    wayland::Event::OverlapNotify(event),
+                    wayland::Event::OverlapNotify(event, ..),
                 )) => Some(Message::Overlap(event)),
                 cosmic::iced::Event::Keyboard(iced::keyboard::Event::KeyReleased {
                     key: Key::Named(Named::Alt | Named::Super),
